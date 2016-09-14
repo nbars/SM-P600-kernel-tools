@@ -1,0 +1,84 @@
+#!/bin/bash
+
+#This tool can be used to flash a kernel an the SM-P600
+
+RECOVERY_DEV_NAME="mmcblk0p10"
+OUT_DIR="/boot"
+KERNEL_DIR="/boot"
+DEFAULT_BOOT_CONFIG="/etc/sm-p600/boot.config"
+
+function txt_bold { tput bold; }
+function txt_reset { tput sgr0; }
+function txt_red { tput setaf 1; }
+function txt_green { tput setaf 2; }
+function txt_yellow { tput setaf 3; }
+
+function err {
+  txt_reset
+  txt_red
+  echo "Error: $1"
+  txt_reset
+  exit 1
+}
+
+function usage {
+  echo "$0 list"
+  echo "List the available kernels"
+  echo ""
+  echo "$0 flash-recovery [kernel-name] <BOOT_CFG>"
+  echo "Builds an image and flash it on to the recovery partition"
+  echo ""
+  echo "If BOOT_CFG is not passed, the default config at $DEFAULT_BOOT_CONFIG"
+  echo "will be used!"
+}
+
+function check_root {
+  if [[ "$UID" != "0" ]]; then
+    err "Come on, run me as root boy!"
+  fi
+}
+
+function flash_on_recovery {
+  local readonly kernel_name="$1"
+  local z_image="${KERNEL_DIR}/${kernel_name}.zImage"
+
+  check_root
+
+  txt_green
+
+  if [[ ! -f "$z_image" ]]; then
+    err "The zImage ($z_image) does not exists!"
+  fi
+
+  initrd_name=${kernel_name}-initramfs.img
+  initrd_path="${KERNEL_DIR}/${initrd_name}"
+
+  if [[ ! -f "$initrd_path" ]]; then
+    err "There is no matching initrd, please generate one with \"mkinitcpio -p $initrd_name\""
+  fi
+
+  echo "=> Creating flashable image..."
+  flashable_img="$OUT_DIR/${initrd_name}-flash.img"
+  abootimg --create "$OUT_DIR/${initrd_name}-flash.img" -k "$z_image" -r "$initrd_path"
+
+  if [[ -e "/dev/${RECOVERY_DEV_NAME}" ]]; then
+    sudo dd if="$flashable_img" "of=/dev/${RECOVERY_DEV_NAME}"
+  elif [[ -e "/dev/block/${RECOVERY_DEV_NAME}" ]]; then
+    sudo dd if="$flashable_img" "of=/dev/block/${RECOVERY_DEV_NAME}"
+  else
+    err "Could not locate recovery partition!"
+  fi
+  txt_reset
+}
+
+if [[ "$1" == "flash-recovery" ]]; then
+  if (( $# != 2 )); then
+    usage
+    err "Wrong number of args"
+  fi
+  shift
+  flash_on_recovery "$1"
+else
+  usage
+  err "Unknown argument $1"
+fi
